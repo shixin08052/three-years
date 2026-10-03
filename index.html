@@ -6,7 +6,8 @@
 <title>我们的第3年</title>
 <style>
   html,body{margin:0;height:100%;background:#2a1e19;overflow:hidden;touch-action:manipulation;-webkit-user-select:none;user-select:none}
-  #stage{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:min(100vw,56.25vh);height:min(100vh,177.78vw);font-size:max(11px,calc(min(100vw,56.25vh)/26))}
+  #stage{position:absolute;left:50%;top:50%;-webkit-transform:translate(-50%,-50%);transform:translate(-50%,-50%);width:360px;height:640px;font-size:14px}
+  #err{position:fixed;left:0;right:0;bottom:0;padding:10px;background:#fff6dc;color:#8a2b1d;font:13px/1.5 monospace;white-space:pre-wrap;z-index:99;display:none}
   #c{display:block;width:100%;height:100%;image-rendering:pixelated;image-rendering:crisp-edges;cursor:pointer;-webkit-tap-highlight-color:transparent}
   #replay{position:absolute;right:5%;top:2.5%;display:none;font:bold 1em "PingFang SC","Microsoft YaHei",sans-serif;color:#5b3424;background:#fff6dc;border:none;padding:.3em .65em;box-shadow:0 0 0 .16em #2b1d1d,.22em .22em 0 .16em #2b1d1d;cursor:pointer;letter-spacing:.05em;-webkit-tap-highlight-color:transparent}
   #replay.show{display:block;animation:pop .3s steps(3)}
@@ -16,6 +17,13 @@
 </head>
 <body>
 <div id="stage"><canvas id="c"></canvas><button id="replay">↻ 重播</button></div>
+<div id="err"></div>
+<script>
+// 画面尺寸用 JS 计算（兼容不支持 CSS min() 的旧浏览器）
+(function(){var st=document.getElementById('stage');function fit(){var de=document.documentElement,w=window.innerWidth||de.clientWidth,h=window.innerHeight||de.clientHeight;var s=Math.min(w/9,h/16);var sw=Math.max(90,Math.floor(9*s)),sh=Math.max(160,Math.floor(16*s));st.style.width=sw+'px';st.style.height=sh+'px';st.style.fontSize=Math.max(11,sw/26)+'px';}fit();window.addEventListener('resize',fit);setTimeout(fit,300);})();
+// 出错时把错误显示在屏幕上，方便排查
+window.onerror=function(m,src,l,c,e){var d=document.getElementById('err');d.style.display='block';d.textContent='出错了（请把这段截图发给我）： '+m+' @'+l+':'+c+' | '+navigator.userAgent;};
+</script>
 <script>
 (()=>{
 'use strict';
@@ -309,7 +317,10 @@ function getText(str,size,fill,stroke,ow,shadow){
   const tw=Math.ceil(m.measureText(str).width);
   const w=tw+pad*2,h=Math.ceil(size*1.35)+pad*2;
   const [c,x]=mk(w,h);x.font=font;x.textBaseline='middle';x.fillStyle='#000';x.fillText(str,pad,h/2+1);
-  const id=x.getImageData(0,0,w,h),d=id.data;
+  let id;try{id=x.getImageData(0,0,w,h);}catch(e){id=null;}
+  if(!id){x.clearRect(0,0,w,h);if(stroke&&ow){x.lineWidth=ow*2;x.strokeStyle=stroke;x.lineJoin='round';x.strokeText(str,pad,h/2+1);}x.fillStyle=fill;x.fillText(str,pad,h/2+1);
+    const adv0=[];for(let i=0;i<=chars.length;i++)adv0.push(pad+Math.round(m.measureText(chars.slice(0,i).join('')).width));return TXC[key]={c,w,h,adv:adv0,n:chars.length,pad};}
+  const d=id.data;
   const mask=new Uint8Array(w*h);for(let i=0;i<w*h;i++)mask[i]=d[i*4+3]>=120?1:0;
   let ol=null;
   if(ow){ol=new Uint8Array(w*h);for(let yy=0;yy<h;yy++)for(let xx=0;xx<w;xx++){const i=yy*w+xx;if(mask[i]){ol[i]=1;continue;}
