@@ -682,7 +682,7 @@ function heartIris(c,col){
   for(let y=0;y<VH;y+=3)for(let x=0;x<VW;x+=3){const X=(x+1.5-cx)/r,Y=-(y+1.5-cy)/r+0.2;const a=X*X+Y*Y-1;if(a*a*a-X*X*Y*Y*Y>0)o.fillRect(x,y,3,3);}
 }
 function transitions(T){
-  if(T<0.8)heartIris(1-ease(T/0.8),'#2a1e19');
+  if(T<0.8)heartIris(1-ease(T/0.8),'#ff9a6b');
   const cols=['#ff8f6b','#fff1d2','#ff8fab','#fff1d2','#ff9a5c'];
   for(let i=1;i<6;i++){const d=T-START[i];if(Math.abs(d)<0.45){
     if(i%2)blockWipe(d,cols[i-1]);else heartIris(1-Math.abs(d)/0.45,cols[i-1]);}}
@@ -728,17 +728,21 @@ function render(dt){
   updateHearts(dt);
   ctx.drawImage(ov,0,0,VW*S,VH*S);
 }
-function loop(now){
-  const dt=Math.min(0.05,(now-last)/1000);last=now;RT+=dt;
+let errShown=false;
+function step(){
+  const now=performance.now();
+  const dt=Math.max(0,Math.min(0.05,(now-last)/1000));last=now;RT+=dt;
   if(!frozen)T+=dt;
   if(T>=TOTAL&&!ended){ended=true;replayBtn.classList.add('show');}
-  render(dt);
-  requestAnimationFrame(loop);
+  try{render(dt);}catch(e){if(!errShown){errShown=true;const d=document.getElementById('err');if(d){d.style.display='block';d.textContent='出错了（请把这段截图发给我）： '+(e&&e.stack||e)+' | '+navigator.userAgent;}}}
 }
+function loop(){step();requestAnimationFrame(loop);}
+// 兜底：如果浏览器没有正常触发 requestAnimationFrame，用定时器继续播放
+setInterval(()=>{if(performance.now()-last>120)step();},40);
 cv.addEventListener('pointerdown',e=>{const r=cv.getBoundingClientRect();spawnHearts((e.clientX-r.left)/r.width*VW,(e.clientY-r.top)/r.height*VH);});
 replayBtn.addEventListener('pointerdown',e=>e.stopPropagation());
 replayBtn.addEventListener('click',e=>{e.stopPropagation();T=0;ended=false;clickHearts=[];replayBtn.classList.remove('show');});
-requestAnimationFrame(loop);
+last=performance.now();step();requestAnimationFrame(loop);
 })();
 </script>
 </body>
