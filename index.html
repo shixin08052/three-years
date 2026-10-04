@@ -12,11 +12,15 @@
   #replay{position:absolute;right:5%;top:2.5%;display:none;font:bold 1em "PingFang SC","Microsoft YaHei",sans-serif;color:#5b3424;background:#fff6dc;border:none;padding:.3em .65em;box-shadow:0 0 0 .16em #2b1d1d,.22em .22em 0 .16em #2b1d1d;cursor:pointer;letter-spacing:.05em;-webkit-tap-highlight-color:transparent}
   #replay.show{display:block;animation:pop .3s steps(3)}
   #replay:active{transform:translate(.12em,.12em)}
+  #music{position:absolute;left:5%;top:2.5%;display:none;font:bold 1em "PingFang SC","Microsoft YaHei",sans-serif;color:#5b3424;background:#fff6dc;border:none;padding:.3em .6em;box-shadow:0 0 0 .16em #2b1d1d,.22em .22em 0 .16em #2b1d1d;cursor:pointer;-webkit-tap-highlight-color:transparent}
+  #music.show{display:block;animation:pop .3s steps(3)}
+  #music.off{color:#b7a08a;text-decoration:line-through}
+  #music:active{transform:translate(.12em,.12em)}
   @keyframes pop{from{transform:scale(.2)}to{transform:scale(1)}}
 </style>
 </head>
 <body>
-<div id="stage"><canvas id="c"></canvas><button id="replay">↻ 重播</button></div>
+<div id="stage"><canvas id="c"></canvas><button id="replay">↻ 重播</button><button id="music" aria-label="音乐开关">♪</button></div>
 <div id="err"></div>
 <script>
 // 画面尺寸用 JS 计算（兼容不支持 CSS min() 的旧浏览器）
@@ -707,10 +711,156 @@ function updateHearts(dt){
   }
 }
 
+// ================== 音乐：温柔的爵士小曲（Web Audio 实时合成，跟画面同步） ==================
+// 80 BPM 的慢摇摆抒情曲，F 大调，10 小节正好 30 秒：
+// 电钢琴铺和弦，颤音琴唱旋律，低音提琴拨弦，鼓刷轻扫；相遇时乐队进来，派对时轻快起来，拍立得定格时落在最后的和弦上。
+const M=(()=>{
+  const AC=window.AudioContext||window.webkitAudioContext;
+  const B=60/80,SW=2/3;            // 一拍 0.75 秒；摇摆八分音符的后半拍落在 2/3 处
+  const mtof=m=>440*Math.pow(2,(m-69)/12);
+  const CH={F9:[57,60,64,67],Dm9:[53,57,60,64],Gm9:[58,62,65,69],C13:[58,62,64,69],D7b9:[54,60,63,69],
+    Am7:[55,60,64,69],F13:[57,63,67,74],Bb9:[57,60,62,65],Bbm6:[55,58,61,65],END:[53,57,64,67,72,76,79]};
+  // [拍, 和弦, 拍数]
+  const CHORDS=[[0,'F9',4],[4,'Dm9',4],[8,'Gm9',2],[10,'C13',2],[12,'F9',2],[14,'D7b9',2],[16,'Gm9',2],[18,'C13',2],
+    [20,'Am7',2],[22,'D7b9',2],[24,'Gm9',2],[26,'C13',2],[28,'F9',2],[30,'F13',2],[32,'Bb9',2],[34,'Bbm6',2],[36,'END',6]];
+  // 旋律 [拍, 拍数, 音高, 力度]
+  const MEL=[[7,SW,69],[7+SW,1/3,72],
+    [8,5/3,74],[9+SW,1/3,72],[10,5/3,69],[11+SW,1/3,67],
+    [12,SW,69],[12+SW,1/3,72],[13,1,76],[14,5/3,75],[15+SW,2,74],
+    [17+SW,1/3,72],[18,SW,70],[18+SW,1/3,69],[19,SW,67],[19+SW,1/3,69],
+    [20,2.2,72],[23,SW,66],[23+SW,1/3,69],
+    [24,SW,70],[24+SW,1/3,74],[25,SW,77],[25+SW,1/3,76],[26,SW,74],[26+SW,1/3,72],[27,SW,76],[27+SW,1/3,79],
+    [28,5/3,81],[29+SW,1/3,79],[30,SW,75],[30+SW,1/3,74],[31,SW,69],[31+SW,1/3,72],
+    [32,2,74],[34,2,73],[36,3.5,72],[38+SW,1/3,79,.45],[39,3,81,.45]];
+  // 低音 [拍, 音高, 拍数]
+  const BASS=[[0,41,2],[2,36,2],[4,38,2],[6,45,2],[8,43,2],[10,36,2],[12,41,2],[14,38,2],[16,43,2],[18,36,2],
+    [20,45,2],[22,38,2],[24,43,2],[26,36,1],[27,40,1],[28,41,1],[29,45,1],[30,48,1],[31,47,1],[32,46,2],[34,37,2],[36,41,6]];
+
+  let ac=null,out=null,bus=null,noise=null,run=null,anchor=0,idx=0,want=false,muted=false;
+  const E=[];
+  const at=(beat,fn)=>E.push({t:beat*B,fn});
+  CHORDS.forEach(([b,n,d])=>{
+    const ns=CH[n];
+    const hit=(bb,len,v,roll,top)=>at(bb,(t,r)=>ns.slice(top||0).forEach((m,i)=>ep(r.ep,t+i*roll,m,len*B,v)));
+    if(b>=26&&b<32){for(let k=0;k<d;k++)hit(b+k,k?0.4:0.6,k?0.3:0.42,0.012);}       // 派对：每拍轻快地弹
+    else hit(b,d-0.1,b<8?0.55:0.48,n==='END'?0.09:(b<8||b>=32)?0.04:0.015);           // 其余：舒展的长和弦
+    if(b<8)hit(b+2+SW,1.2,0.26,0.02,2);                                               // 前奏里轻轻补一下
+  });
+  MEL.forEach(([b,d,m,v])=>at(b,(t,r)=>vib(r.vib,t,m,d*B+0.05,0.6*(v||1))));
+  // 标题字一个个落下时，叮叮叮的小亮片
+  [77,81,84,88,89,93].forEach((m,i)=>E.push({t:3.5+i*0.1+0.18,fn:(t,r)=>vib(r.vib,t,m,0.6,0.16)}));
+  [76,79,84,88,91].forEach((m,i)=>E.push({t:21+i*0.1+0.18,fn:(t,r)=>vib(r.vib,t,m,0.6,0.14)}));
+  BASS.forEach(([b,m,d])=>at(b,(t,r)=>bass(r.bass,t,m,d*B)));
+  for(let b=8;b<36;b++){                                                              // 两人相遇时鼓刷进来
+    const v=b>=32?0.6:1;
+    at(b,(t,r)=>swish(r.drm,t,v));
+    if(b%2)at(b,(t,r)=>tap(r.drm,t,0.8*v));
+    if(b>=27&&b<32){at(b,(t,r)=>ride(r.drm,t,0.8));at(b+SW,(t,r)=>tap(r.drm,t,0.25));if(b%2)at(b+SW,(t,r)=>ride(r.drm,t,0.5));}
+  }
+  at(34.6,(t,r)=>swell(r.drm,t,1.4*B));                                              // 拍立得闪光前的镲片轻扬
+  E.sort((a,b)=>a.t-b.t);
+
+  const osc=(type,f,t,end)=>{const o=ac.createOscillator();o.type=type;o.frequency.value=f;o.start(t);o.stop(end);return o;};
+  const gain=v=>{const g=ac.createGain();g.gain.value=v;return g;};
+  const filt=(type,f,q)=>{const b=ac.createBiquadFilter();b.type=type;b.frequency.value=f;b.Q.value=q;return b;};
+  const chain=(...ns)=>{for(let i=0;i<ns.length-1;i++)ns[i].connect(ns[i+1]);return ns[0];};
+  function pluck(g,t,peak,att,tau,end,rel){g.setValueAtTime(0,t);g.linearRampToValueAtTime(peak,t+att);g.setTargetAtTime(0,t+att,tau);if(end)g.setTargetAtTime(0,end,rel);}
+  function noiseSrc(t,end){const s=ac.createBufferSource();s.buffer=noise;s.loop=true;s.start(t,Math.random()*1.5);s.stop(end);return s;}
+  // 电钢琴：两算子 FM，起音带一点金属亮，随后变得圆润
+  function ep(dest,t,m,dur,v){
+    const f=mtof(m),end=t+dur+1.2,c=osc('sine',f,t,end),mo=osc('sine',f,t,end),mg=gain(0),a=gain(0);
+    mg.gain.setValueAtTime(f*1.8*v,t);mg.gain.setTargetAtTime(f*0.3,t,0.3);
+    chain(mo,mg,c.frequency);chain(c,a,dest);
+    pluck(a.gain,t,0.13*v,0.006,1.4,t+dur,0.18);
+  }
+  // 颤音琴：基音 + 4 倍泛音的“叮”，摇摆的颤音在总线上
+  function vib(dest,t,m,dur,v){
+    const f=mtof(m),end=t+dur+1.5,o1=osc('sine',f,t,end),o2=osc('sine',f*4,t,end),g2=gain(0),a=gain(0);
+    g2.gain.setValueAtTime(0.3,t);g2.gain.setTargetAtTime(0,t,0.08);
+    chain(o2,g2,a);chain(o1,a,dest);
+    pluck(a.gain,t,0.27*v,0.004,1.6,t+dur,0.3);
+  }
+  // 低音提琴：三角波 + 低通，拨弦后自然衰减
+  function bass(dest,t,m,dur){
+    const f=mtof(m),end=t+dur+0.5,o=osc('triangle',f,t,end),lp=filt('lowpass',1300,0.8),a=gain(0);
+    lp.frequency.setValueAtTime(1300,t);lp.frequency.setTargetAtTime(420,t,0.12);
+    chain(o,lp,a,dest);
+    pluck(a.gain,t,0.2,0.012,0.8,t+dur-0.04,0.06);
+  }
+  function swish(dest,t,v){const s=noiseSrc(t,t+B+0.05),g=gain(0);chain(s,filt('bandpass',2600,0.5),g,dest);
+    g.gain.setValueAtTime(0,t);g.gain.linearRampToValueAtTime(0.05*v,t+0.4*B);g.gain.linearRampToValueAtTime(0,t+B);}
+  function tap(dest,t,v){const s=noiseSrc(t,t+0.3),g=gain(0);chain(s,filt('bandpass',1900,0.9),g,dest);
+    g.gain.setValueAtTime(0.35*v,t);g.gain.setTargetAtTime(0,t,0.045);}
+  function ride(dest,t,v){const s=noiseSrc(t,t+1),g=gain(0);chain(s,filt('highpass',7000,0.7),g,dest);
+    g.gain.setValueAtTime(0.07*v,t);g.gain.setTargetAtTime(0,t,0.22);}
+  function swell(dest,t,len){const s=noiseSrc(t,t+len+5),g=gain(0);chain(s,filt('highpass',5000,0.5),g,dest);
+    g.gain.setValueAtTime(0,t);g.gain.linearRampToValueAtTime(0.045,t+len);g.gain.setTargetAtTime(0,t+len,1.1);}
+
+  function build(){
+    const comp=ac.createDynamicsCompressor();comp.threshold.value=-16;comp.ratio.value=3;comp.attack.value=0.01;comp.release.value=0.25;
+    out=gain(muted?0:1);chain(out,comp,ac.destination);
+    noise=ac.createBuffer(1,ac.sampleRate*2,ac.sampleRate);const nd=noise.getChannelData(0);for(let i=0;i<nd.length;i++)nd[i]=Math.random()*2-1;
+    // 人工混响：衰减的噪声当作房间回声
+    const len=Math.floor(ac.sampleRate*2.4),ir=ac.createBuffer(2,len,ac.sampleRate);
+    for(let ch=0;ch<2;ch++){const d=ir.getChannelData(ch);for(let i=0;i<len;i++)d[i]=(Math.random()*2-1)*Math.pow(1-i/len,3);}
+    const verb=ac.createConvolver();verb.buffer=ir;chain(verb,filt('lowpass',4500,0.5),gain(0.7),out);
+    bus={};
+    // [名字, 音量, 混响量, 颤音速度, 颤音深度]
+    [['ep',0.9,0.35,4.2,0.12],['vib',0.85,0.5,5.2,0.25],['bass',1,0.06,0,0],['drm',0.9,0.2,0,0]].forEach(([n,v,s,lf,dp])=>{
+      const g=gain(v);g.connect(out);chain(g,gain(s),verb);
+      if(lf){const l=ac.createOscillator();l.frequency.value=lf;chain(l,gain(dp*v),g.gain);l.start();}
+      bus[n]=g;
+    });
+  }
+  function newRun(){const r={};for(const n in bus){r[n]=gain(1);r[n].connect(bus[n]);}return r;}
+  function killRun(r){const t=ac.currentTime;for(const n in r){r[n].gain.setTargetAtTime(0,t,0.03);}setTimeout(()=>{for(const n in r)r[n].disconnect();},400);}
+  const running=()=>ac&&(!ac.state||ac.state==='running');
+  function seek(T){idx=0;while(idx<E.length&&E[idx].t<T)idx++;}
+  return {
+    // 必须在用户点击里调用（浏览器不允许自动播放声音）
+    init(){
+      if(!AC)return;
+      if(!ac){
+        try{if(navigator.audioSession)navigator.audioSession.type='playback';ac=new AC();build();}catch(e){ac=null;return;}
+        try{const s=ac.createBufferSource();s.buffer=ac.createBuffer(1,1,22050);s.connect(ac.destination);s.start(0);}catch(e){}
+        want=true;
+      }
+      if(ac.resume&&!document.hidden)ac.resume();
+    },
+    restart(){want=true;},
+    // 每帧调用：按需排下一小段音符，返回音乐当前播到的时间（用来让画面对齐音乐）
+    tick(T){
+      if(!running())return null;
+      if(want){want=false;if(run)killRun(run);run=newRun();anchor=ac.currentTime+0.06-T;seek(T);}
+      const st=ac.currentTime-anchor;
+      while(idx<E.length&&E[idx].t<st+0.35){const e=E[idx++];try{e.fn(Math.max(anchor+e.t,ac.currentTime),run);}catch(err){}}
+      return st;
+    },
+    reanchor(T){if(!ac)return;anchor=ac.currentTime-T;seek(T);},
+    vis(hidden){if(!ac)return;try{hidden?ac.suspend():ac.resume();}catch(e){}},
+    ping(){if(!running())return;const p=[77,79,81,84,86,89];vib(bus.vib,ac.currentTime,p[Math.floor(Math.random()*p.length)],0.3,0.22);},
+    toggle(){muted=!muted;if(out)out.gain.setTargetAtTime(muted?0:1,ac.currentTime,0.05);return muted;},
+    get ok(){return !!AC;}
+  };
+})();
+
 // ================== 主循环 ==================
 const qs=new URLSearchParams(location.search);
 let T=parseFloat(qs.get('t'))||0;const frozen=qs.has('p');
 let RT=0,last=performance.now(),ended=false;
+// 封面：浏览器要求点一下才能出声，所以先停在封面，点击后音乐和动画一起开始（调试参数 ?t= / ?p 跳过封面）
+let started=frozen||qs.has('t');
+const musicBtn=document.getElementById('music');
+function drawCover(){
+  o.fillStyle='#ff9a6b';o.fillRect(0,0,VW,VH);
+  const b=rnd(Math.sin(RT*3)*2),s=3;
+  o.drawImage(HB,rnd(VW/2-4.5*s),rnd(78-4*s+b),9*s,8*s);
+  [[30,60],[80,52],[24,100],[86,96]].forEach(([x,y],i)=>{if(Math.floor(RT*2.5+i)%3){o.fillStyle=i%2?'#ffffff':'#fff3a0';o.fillRect(x,y,1,1);o.fillRect(x-1,y,3,1);o.fillRect(x,y-1,1,3);}});
+}
+function coverText(){
+  if(Math.floor(RT*1.6)%3){const tx=getText('轻点屏幕 · 开始',18,'#fff6dc','#c4504a',2,null);drawTyped(tx,tx.n,VW/2*S,116*S);}
+  const t2=getText('♪ 记得打开声音',13,'#ffe6cf',null,0,null);drawTyped(t2,t2.n,VW/2*S,134*S);
+}
 buildRainbow();
 camY=0;couchFinal(1.99);sg.drawImage(buf,0,0);g.clearRect(0,0,W,H);
 function render(dt){
@@ -725,23 +875,35 @@ function render(dt){
   drawTexts();
   o.clearRect(0,0,VW,VH);
   transitions(t);
+  if(!started)drawCover();
   updateHearts(dt);
   ctx.drawImage(ov,0,0,VW*S,VH*S);
+  if(!started)coverText();
 }
 let errShown=false;
 function step(){
   const now=performance.now();
   const dt=Math.max(0,Math.min(0.05,(now-last)/1000));last=now;RT+=dt;
-  if(!frozen)T+=dt;
+  if(!frozen&&started)T+=dt;
+  // 画面跟着音乐的时钟走：小偏差慢慢追上，大偏差（比如卡顿）就让音乐对齐画面
+  const st=M.tick(T);
+  if(st!==null&&!frozen&&T<TOTAL){const err=st-T;if(Math.abs(err)<0.4)T=Math.max(0,T+err*0.08);else M.reanchor(T);}
   if(T>=TOTAL&&!ended){ended=true;replayBtn.classList.add('show');}
   try{render(dt);}catch(e){if(!errShown){errShown=true;const d=document.getElementById('err');if(d){d.style.display='block';d.textContent='出错了（请把这段截图发给我）： '+(e&&e.stack||e)+' | '+navigator.userAgent;}}}
 }
 function loop(){step();requestAnimationFrame(loop);}
 // 兜底：如果浏览器没有正常触发 requestAnimationFrame，用定时器继续播放
 setInterval(()=>{if(performance.now()-last>120)step();},40);
-cv.addEventListener('pointerdown',e=>{const r=cv.getBoundingClientRect();spawnHearts((e.clientX-r.left)/r.width*VW,(e.clientY-r.top)/r.height*VH);});
+cv.addEventListener('pointerdown',e=>{const r=cv.getBoundingClientRect();spawnHearts((e.clientX-r.left)/r.width*VW,(e.clientY-r.top)/r.height*VH);M.ping();});
+stage.addEventListener('click',()=>{
+  if(!started){started=true;T=0;clickHearts=[];if(M.ok)musicBtn.classList.add('show');}
+  M.init();
+});
 replayBtn.addEventListener('pointerdown',e=>e.stopPropagation());
-replayBtn.addEventListener('click',e=>{e.stopPropagation();T=0;ended=false;clickHearts=[];replayBtn.classList.remove('show');});
+replayBtn.addEventListener('click',e=>{e.stopPropagation();T=0;ended=false;clickHearts=[];replayBtn.classList.remove('show');M.init();M.restart();});
+musicBtn.addEventListener('pointerdown',e=>e.stopPropagation());
+musicBtn.addEventListener('click',e=>{e.stopPropagation();M.init();musicBtn.classList.toggle('off',M.toggle());});
+document.addEventListener('visibilitychange',()=>M.vis(document.hidden));
 last=performance.now();step();requestAnimationFrame(loop);
 })();
 </script>
